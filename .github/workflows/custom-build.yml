@@ -30,7 +30,7 @@ jobs:
           # 2. 选中节点使用高对比度主题色背景高亮
           find packages/ui/components -type f -name "*Proxy*.vue" -exec sed -i 's/border-primary/border-primary bg-primary\/85 text-primary-content/g' {} + || true
 
-          # 3. 注入 CSS：修复配置页单列布局 + 节点延迟数字黑色描边
+          # 3. 注入 CSS：仅增强选中节点卡片内的延迟胶囊底色对比度，绝不给其他区域加黑边
           CSS_FILE=$(find packages/ui/assets -type f -name "*.css" | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting custom layout CSS into $CSS_FILE"
@@ -44,17 +44,11 @@ jobs:
             }
           }
 
-          /* 节点延迟数字与徽章添加黑色描边，防止高亮背景下看不清 */
-          [class*="Proxy"] span,
-          [class*="proxy"] span,
-          .badge {
+          /* 仅针对选中状态节点卡片内的延迟数字胶囊，加深其容器底色使其清晰可辨（不添加任何文字黑边） */
+          .border-primary[class*="bg-primary"] .badge,
+          .border-primary[class*="bg-primary"] [class*="rounded"][class*="px-"] {
+            background-color: #161a1e !important;
             font-weight: 700 !important;
-            text-shadow: 
-              -1px -1px 0 #000,  
-               1px -1px 0 #000,
-              -1px  1px 0 #000,
-               1px  1px 0 #000,
-               0px  1px 2px rgba(0, 0, 0, 0.9) !important;
           }
           EOF
           fi
