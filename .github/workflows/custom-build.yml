@@ -30,7 +30,7 @@ jobs:
           # 2. 选中节点使用高对比度主题色背景高亮
           find packages/ui/components -type f -name "*Proxy*.vue" -exec sed -i 's/border-primary/border-primary bg-primary\/85 text-primary-content/g' {} + || true
 
-          # 3. 注入 CSS：仅增强选中节点卡片内的延迟胶囊底色对比度，绝不给其他区域加黑边
+          # 3. 注入 CSS：修复配置页单列布局 + 选中节点延迟胶囊加深底色
           CSS_FILE=$(find packages/ui/assets -type f -name "*.css" | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting custom layout CSS into $CSS_FILE"
@@ -44,7 +44,7 @@ jobs:
             }
           }
 
-          /* 仅针对选中状态节点卡片内的延迟数字胶囊，加深其容器底色使其清晰可辨（不添加任何文字黑边） */
+          /* 仅针对选中状态节点卡片内的延迟数字胶囊加深底色 */
           .border-primary[class*="bg-primary"] .badge,
           .border-primary[class*="bg-primary"] [class*="rounded"][class*="px-"] {
             background-color: #161a1e !important;
@@ -53,7 +53,7 @@ jobs:
           EOF
           fi
 
-          # 4. 编写完整交互增强插件
+          # 4. 编写完整交互增强插件（含后台可视化策略组固定排序开关面板）
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
           export default defineNuxtPlugin(() => {
@@ -62,6 +62,40 @@ jobs:
             const initHash = window.location.hash
             if (initHash === '' || initHash === '#/' || initHash === '#') {
               window.location.replace('#/proxies')
+            }
+
+            // 读取与保存自定义固定排序设置（默认包含指定的 8 个组）
+            const STORAGE_KEY = 'custom_fixed_groups_cfg_v1'
+            const DEFAULT_CFG = {
+              enabled: true,
+              keywords: ['YouTube', 'Google', 'Telegram', 'Agnet', 'Agent', 'GitHub', '🐤 X', 'AV}', 'TikTok'],
+              exactGroups: [] as string[]
+            }
+
+            const getFixedConfig = () => {
+              try {
+                const raw = localStorage.getItem(STORAGE_KEY)
+                if (raw) return { ...DEFAULT_CFG, ...JSON.parse(raw) }
+              } catch {}
+              return { ...DEFAULT_CFG }
+            }
+
+            const saveFixedConfig = (cfg: typeof DEFAULT_CFG) => {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
+              syncOriginalGroupOrders()
+            }
+
+            const isGroupFixed = (gName: string) => {
+              const cfg = getFixedConfig()
+              if (!cfg.enabled) return false
+              if (cfg.exactGroups.includes(gName)) return true
+              const cleanName = gName.trim()
+              return cfg.keywords.some((kw: string) => {
+                const k = kw.trim()
+                if (!k) return false
+                if (k === 'X' || k === '🐤 X') return cleanName === 'X' || cleanName.includes('🐤 X')
+                return cleanName.toLowerCase().includes(k.toLowerCase())
+              })
             }
 
             const getApiConfig = () => {
@@ -92,9 +126,7 @@ jobs:
 
               const fullHref = window.location.href
               const secretMatch = fullHref.match(/[?&]secret=([^&#]+)/)
-              if (secretMatch && !secret) {
-                secret = decodeURIComponent(secretMatch[1])
-              }
+              if (secretMatch && !secret) secret = decodeURIComponent(secretMatch[1])
               const hostMatch = fullHref.match(/[?&]hostname=([^&#]+)/)
               const portMatch = fullHref.match(/[?&]port=([^&#]+)/)
               if (hostMatch && portMatch) {
@@ -104,6 +136,164 @@ jobs:
 
               return { url, secret }
             }
+
+            let allSelectorGroups: string[] = []
+            let originalOrderMap: Record<string, Record<string, number>> = {}
+
+            const syncOriginalGroupOrders = async () => {
+              try {
+                const { url, secret } = getApiConfig()
+                const headers: Record<string, string> = {}
+                if (secret) headers['Authorization'] = `Bearer ${secret}`
+                const res = await fetch(`${url}/proxies`, { headers })
+                if (!res.ok) return
+                const data = await res.json()
+                const proxies = data?.proxies || {}
+                const map: Record<string, Record<string, number>> = {}
+                const groups: string[] = []
+
+                for (const [gName, gInfo] of Object.entries<any>(proxies)) {
+                  if (Array.isArray(gInfo?.all) && gName !== 'GLOBAL') {
+                    groups.push(gName)
+                    if (isGroupFixed(gName)) {
+                      map[gName] = {}
+                      gInfo.all.forEach((nodeName: string, idx: number) => {
+                        map[gName][nodeName] = idx
+                      })
+                    }
+                  }
+                }
+                allSelectorGroups = groups
+                originalOrderMap = map
+              } catch {}
+            }
+
+            const applyFixedGroupDomOrder = () => {
+              const headers = Array.from(document.querySelectorAll('h2, h3, [class*="collapse-title"], [class*="group"]'))
+              for (const h of headers) {
+                const rawTitle = (h.textContent || '').trim()
+                const matchedGroup = Object.keys(originalOrderMap).find(g => rawTitle.includes(g))
+                const container = h.closest('[class*="rounded"]') || h.parentElement?.parentElement
+                if (!container) continue
+                const grid = container.querySelector('.grid') as HTMLElement | null
+                if (!grid) continue
+                const cards = Array.from(grid.children) as HTMLElement[]
+
+                if (!matchedGroup) {
+                  // 如果用户取消了某组的固定排序，恢复默认 order
+                  cards.forEach(card => { if (card.style.order) card.style.order = '' })
+                  continue
+                }
+
+                const orderDict = originalOrderMap[matchedGroup]
+                if (cards.length < 2) continue
+
+                cards.forEach((card) => {
+                  const text = (card.textContent || '').trim()
+                  let foundIdx = 9999
+                  for (const [nodeName, idx] of Object.entries(orderDict)) {
+                    if (text.startsWith(nodeName) || text.includes(nodeName)) {
+                      foundIdx = idx
+                      break
+                    }
+                  }
+                  if (card.style.order !== String(foundIdx)) {
+                    card.style.order = String(foundIdx)
+                  }
+                })
+              }
+            }
+
+            // 在“配置”页面动态挂载可视化控制面板
+            const mountConfigPanel = () => {
+              if (!window.location.hash.includes('/config')) return
+              if (document.getElementById('custom-fixed-groups-panel')) return
+              const mainEl = document.querySelector('main')
+              if (!mainEl) return
+
+              const cfg = getFixedConfig()
+              const panel = document.createElement('div')
+              panel.id = 'custom-fixed-groups-panel'
+              panel.style.cssText = 'margin:12px 16px;padding:14px;border-radius:12px;background:rgba(30,35,42,0.92);border:1px solid rgba(255,255,255,0.12);color:#fff;font-size:13px;'
+
+              panel.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                  <strong style="font-size:15px;color:#38bdf8;">📌 策略组固定排序设置（不随延迟重排）</strong>
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                    <input type="checkbox" id="cfg-fixed-enable" ${cfg.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#38bdf8;" />
+                    <span>总开关</span>
+                  </label>
+                </div>
+                <div style="margin-bottom:10px;">
+                  <div style="color:#94a3b8;font-size:12px;margin-bottom:4px;">关键词匹配（英文逗号分隔，含以下文字的组自动保持自建节点固定在前的原始顺序）：</div>
+                  <input type="text" id="cfg-fixed-keywords" value="${cfg.keywords.join(', ')}" style="width:100%;padding:6px 10px;border-radius:8px;background:#0f172a;border:1px solid #334155;color:#f8fafc;font-size:12px;" />
+                </div>
+                <div style="color:#94a3b8;font-size:12px;margin-bottom:6px;">当前策略组快速勾选（新增组可直接勾选）：</div>
+                <div id="cfg-fixed-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+              `
+
+              mainEl.prepend(panel)
+
+              const renderCheckboxes = () => {
+                const boxWrap = document.getElementById('cfg-fixed-checkboxes')
+                if (!boxWrap) return
+                const current = getFixedConfig()
+                if (!allSelectorGroups.length) {
+                  boxWrap.innerHTML = '<span style="color:#64748b;font-size:12px;">正在读取策略组列表...</span>'
+                  return
+                }
+                boxWrap.innerHTML = ''
+                allSelectorGroups.forEach(gName => {
+                  const active = isGroupFixed(gName)
+                  const tag = document.createElement('label')
+                  tag.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid ${active ? '#38bdf8' : '#334155'};background:${active ? 'rgba(56,189,248,0.18)' : '#0f172a'};`
+                  const cb = document.createElement('input')
+                  cb.type = 'checkbox'
+                  cb.checked = active
+                  cb.style.accentColor = '#38bdf8'
+                  cb.onchange = () => {
+                    const next = getFixedConfig()
+                    if (cb.checked) {
+                      if (!next.exactGroups.includes(gName)) next.exactGroups.push(gName)
+                    } else {
+                      next.exactGroups = next.exactGroups.filter((x: string) => x !== gName)
+                      // 若被关键词命中则同步移除对应关键词
+                      next.keywords = next.keywords.filter((kw: string) => !gName.toLowerCase().includes(kw.trim().toLowerCase()))
+                      const kwInput = document.getElementById('cfg-fixed-keywords') as HTMLInputElement | null
+                      if (kwInput) kwInput.value = next.keywords.join(', ')
+                    }
+                    saveFixedConfig(next)
+                    renderCheckboxes()
+                  }
+                  const span = document.createElement('span')
+                  span.innerText = gName
+                  tag.appendChild(cb)
+                  tag.appendChild(span)
+                  boxWrap.appendChild(tag)
+                })
+              }
+
+              renderCheckboxes()
+
+              const enableCb = document.getElementById('cfg-fixed-enable') as HTMLInputElement
+              enableCb.onchange = () => {
+                const next = getFixedConfig()
+                next.enabled = enableCb.checked
+                saveFixedConfig(next)
+                renderCheckboxes()
+              }
+
+              const kwInput = document.getElementById('cfg-fixed-keywords') as HTMLInputElement
+              kwInput.onchange = () => {
+                const next = getFixedConfig()
+                next.keywords = kwInput.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+                saveFixedConfig(next)
+                renderCheckboxes()
+              }
+            }
+
+            setTimeout(syncOriginalGroupOrders, 1000)
+            setInterval(syncOriginalGroupOrders, 15000)
 
             const flushCache = async (type: 'fakeip' | 'dns', btn: HTMLButtonElement) => {
               const origText = btn.innerText
@@ -139,6 +329,9 @@ jobs:
             }
 
             const enhanceNavigation = () => {
+              applyFixedGroupDomOrder()
+              mountConfigPanel()
+
               const desktopNav = document.querySelector('aside nav') || document.querySelector('nav')
               if (desktopNav && window.innerWidth >= 768 && !document.getElementById('custom-desktop-flush')) {
                 const box = document.createElement('div')
@@ -182,7 +375,7 @@ jobs:
               }
             }
 
-            setInterval(enhanceNavigation, 800)
+            setInterval(enhanceNavigation, 600)
           })
           EOF
 
