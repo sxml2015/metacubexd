@@ -24,10 +24,10 @@ jobs:
 
       - name: Patch mobile 2-column grid
         run: |
-          # 1. 尝试替换源码中的 grid-cols-1（找不到则用 || true 安全跳过，绝不报错）
+          # 1. 尝试替换源码中的 grid-cols-1（找不到安全跳过）
           grep -rl "grid-cols-1" . --exclude-dir={node_modules,.git} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
 
-          # 2. 向主样式文件追加手机端强制双列 CSS 规则（确保新版动态网格也生效）
+          # 2. 向主样式文件追加手机端强制双列 CSS 规则
           CSS_FILE=$(find src -type f \( -name "index.css" -o -name "app.css" -o -name "*.css" \) | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting mobile 2-column CSS into $CSS_FILE"
@@ -48,9 +48,22 @@ jobs:
 
       - name: Package build output
         run: |
-          # 精准定位编译产物目录（查找包含编译后带哈希 JS 文件的目录的上一级）
-          ASSETS_DIR=$(find . -type f -name "index-*.js" ! -path "./node_modules/*" | head -n 1 | xargs dirname)
-          OUT_DIR=$(dirname "$ASSETS_DIR")
+          # 查找编译后同时包含 index.html 和 assets 目录的文件夹（排除源码和依赖目录）
+          OUT_DIR=""
+          for f in $(find . -name "index.html" ! -path "./node_modules/*" ! -path "./public/*" ! -path "./.git/*"); do
+            DIR=$(dirname "$f")
+            if [ -d "$DIR/assets" ]; then
+              OUT_DIR="$DIR"
+              break
+            fi
+          done
+
+          if [ -z "$OUT_DIR" ]; then
+            echo "Build output directory not found! Listing directories:"
+            find . -maxdepth 3 -type d ! -path "./node_modules*" ! -path "./.git*"
+            exit 1
+          fi
+
           echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
           zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
