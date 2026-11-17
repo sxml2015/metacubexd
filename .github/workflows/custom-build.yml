@@ -24,11 +24,11 @@ jobs:
 
       - name: Patch mobile 2-column grid
         run: |
-          # 1. 尝试替换源码中的 grid-cols-1（找不到安全跳过）
-          grep -rl "grid-cols-1" . --exclude-dir={node_modules,.git} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
+          # 1. 替换 packages/ui 下的单列网格为双列
+          grep -rl "grid-cols-1" packages/ui --exclude-dir={node_modules,.nuxt,.output} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
 
-          # 2. 向主样式文件追加手机端强制双列 CSS 规则
-          CSS_FILE=$(find src -type f \( -name "index.css" -o -name "app.css" -o -name "*.css" \) | head -n 1)
+          # 2. 向 packages/ui/assets 下的主样式文件追加手机端强制双列 CSS 规则
+          CSS_FILE=$(find packages/ui/assets -type f -name "*.css" | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting mobile 2-column CSS into $CSS_FILE"
             cat << 'EOF' >> "$CSS_FILE"
@@ -41,29 +41,18 @@ jobs:
           EOF
           fi
 
-      - name: Install and Build
+      - name: Install and Build UI
         run: |
           pnpm install --no-frozen-lockfile
-          pnpm build
+          pnpm --filter @metacubexd/ui generate || pnpm --filter ui generate || pnpm build
 
       - name: Package build output
         run: |
-          # 查找编译后同时包含 index.html 和 assets 目录的文件夹（排除源码和依赖目录）
-          OUT_DIR=""
-          for f in $(find . -name "index.html" ! -path "./node_modules/*" ! -path "./public/*" ! -path "./.git/*"); do
-            DIR=$(dirname "$f")
-            if [ -d "$DIR/assets" ]; then
-              OUT_DIR="$DIR"
-              break
-            fi
-          done
-
+          # Nuxt 3 静态产物目录位于 packages/ui/.output/public
+          OUT_DIR=$(find packages/ui -type f -name "index.html" -path "*/.output/public/*" | head -n 1 | xargs dirname)
           if [ -z "$OUT_DIR" ]; then
-            echo "Build output directory not found! Listing directories:"
-            find . -maxdepth 3 -type d ! -path "./node_modules*" ! -path "./.git*"
-            exit 1
+            OUT_DIR="packages/ui/.output/public"
           fi
-
           echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
           zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
