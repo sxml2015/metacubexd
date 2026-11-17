@@ -24,7 +24,22 @@ jobs:
 
       - name: Patch mobile 2-column grid
         run: |
-          grep -rl "grid-cols-1" . --exclude-dir={node_modules,.git} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g'
+          # 1. 尝试替换源码中的 grid-cols-1（找不到则用 || true 安全跳过，绝不报错）
+          grep -rl "grid-cols-1" . --exclude-dir={node_modules,.git} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
+
+          # 2. 向主样式文件追加手机端强制双列 CSS 规则（确保新版动态网格也生效）
+          CSS_FILE=$(find src -type f \( -name "index.css" -o -name "app.css" -o -name "*.css" \) | head -n 1)
+          if [ -n "$CSS_FILE" ]; then
+            echo "Injecting mobile 2-column CSS into $CSS_FILE"
+            cat << 'EOF' >> "$CSS_FILE"
+          @media (max-width: 640px) {
+            .grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+              gap: 0.375rem !important;
+            }
+          }
+          EOF
+          fi
 
       - name: Install and Build
         run: |
