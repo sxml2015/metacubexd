@@ -46,28 +46,60 @@ jobs:
           EOF
           fi
 
-          # 4. 编写完整交互增强插件
+          # 4. 编写完整交互增强插件（智能匹配后端地址与密钥）
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
           export default defineNuxtPlugin(() => {
             if (typeof window === 'undefined') return
 
-            // 修复1：仅在首次进入首页（#/ 或空 hash）时自动跳到代理页，手动点击“概览”(#/overview)可正常进入
+            // 仅首次打开根目录时跳转到代理页
             const initHash = window.location.hash
             if (initHash === '' || initHash === '#/' || initHash === '#') {
               window.location.replace('#/proxies')
             }
 
+            // 智能提取当前连接的 Clash/mihomo 后端地址与 Secret 密钥
             const getApiConfig = () => {
-              try {
-                const raw = localStorage.getItem('endpoint') || localStorage.getItem('selectedEndpoint')
-                if (raw) {
-                  const parsed = JSON.parse(raw)
-                  const item = Array.isArray(parsed) ? parsed[0] : parsed
-                  if (item?.url) return { url: item.url.replace(/\/$/, ''), secret: item.secret || '' }
+              let url = window.location.origin
+              let secret = ''
+
+              // 1. 优先遍历 localStorage 寻找包含 url 和 secret 的后端配置对象
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i)
+                if (!key) continue
+                const val = localStorage.getItem(key) || ''
+                if (val.includes('http://') || val.includes('https://')) {
+                  try {
+                    const parsed = JSON.parse(val)
+                    const list = Array.isArray(parsed) ? parsed : [parsed]
+                    const found = list.find((item: any) => item && typeof item === 'object' && typeof item.url === 'string' && item.url.startsWith('http'))
+                    if (found) {
+                      url = found.url.replace(/\/$/, '')
+                      secret = found.secret || ''
+                      break
+                    }
+                  } catch {
+                    if (val.startsWith('http://') || val.startsWith('https://')) {
+                      url = val.replace(/\/$/, '')
+                    }
+                  }
                 }
-              } catch {}
-              return { url: window.location.origin, secret: '' }
+              }
+
+              // 2. 兜底：检查 URL Hash 或 Search 参数中的 secret / hostname / port
+              const fullHref = window.location.href
+              const secretMatch = fullHref.match(/[?&]secret=([^&#]+)/)
+              if (secretMatch && !secret) {
+                secret = decodeURIComponent(secretMatch[1])
+              }
+              const hostMatch = fullHref.match(/[?&]hostname=([^&#]+)/)
+              const portMatch = fullHref.match(/[?&]port=([^&#]+)/)
+              if (hostMatch && portMatch) {
+                const proto = fullHref.includes('https=true') ? 'https' : 'http'
+                url = `${proto}://${decodeURIComponent(hostMatch[1])}:${decodeURIComponent(portMatch[1])}`
+              }
+
+              return { url, secret }
             }
 
             const flushCache = async (type: 'fakeip' | 'dns', btn: HTMLButtonElement) => {
@@ -75,14 +107,20 @@ jobs:
               btn.innerText = '清理中...'
               try {
                 const { url, secret } = getApiConfig()
-                const headers: Record<string, string> = {}
+                const headers: Record<string, string> = { 'Content-Type': 'application/json' }
                 if (secret) headers['Authorization'] = `Bearer ${secret}`
                 const res = await fetch(`${url}/cache/${type}/flush`, { method: 'POST', headers })
-                btn.innerText = res.ok ? '已清空 ✓' : '失败 !'
-              } catch {
-                btn.innerText = '失败 !'
+                if (res.ok) {
+                  btn.innerText = '已清空 ✓'
+                } else {
+                  console.error(`[CustomUX] Flush ${type} failed:`, res.status, url)
+                  btn.innerText = `失败(${res.status})`
+                }
+              } catch (err) {
+                console.error(`[CustomUX] Flush ${type} error:`, err)
+                btn.innerText = '网络错误'
               }
-              setTimeout(() => { btn.innerText = origText }, 1200)
+              setTimeout(() => { btn.innerText = origText }, 1500)
             }
 
             const mkFlushBtn = (label: string, type: 'fakeip' | 'dns', bg: string, isDesktop: boolean) => {
@@ -99,9 +137,8 @@ jobs:
               return b
             }
 
-            // 修复2 & 3：分别适配电脑侧边栏大按钮 + 手机底部直达“配置”与快捷清缓存按钮
             const enhanceNavigation = () => {
-              // A. 电脑端左侧导航栏（挂载大号按钮，不隐藏用量/日志）
+              // 电脑端左侧导航栏
               const desktopNav = document.querySelector('aside nav') || document.querySelector('nav')
               if (desktopNav && window.innerWidth >= 768 && !document.getElementById('custom-desktop-flush')) {
                 const box = document.createElement('div')
@@ -112,9 +149,8 @@ jobs:
                 desktopNav.appendChild(box)
               }
 
-              // B. 手机端底部导航：将中间的“+ 更多”按钮直接改为“配置”，并在底栏上方挂载醒目的快捷清缓存条
+              // 手机端底部导航改造
               if (window.innerWidth < 768) {
-                // 查找手机底部悬浮导航容器
                 const allEls = Array.from(document.querySelectorAll('div, nav, footer'))
                 const mobileDock = allEls.find(el => {
                   const style = window.getComputedStyle(el)
@@ -122,7 +158,6 @@ jobs:
                 }) as HTMLElement | undefined
 
                 if (mobileDock) {
-                  // 将“更多”按钮改造为直接跳转“配置”
                   const btns = Array.from(mobileDock.querySelectorAll('button, a'))
                   const moreBtn = btns.find(b => b.textContent?.includes('更多')) as HTMLElement | undefined
                   if (moreBtn && !moreBtn.dataset.patchedConfig) {
@@ -136,7 +171,6 @@ jobs:
                     }
                   }
 
-                  // 在手机底部导航栏正上方添加双按钮快捷栏（清FakeIP & 清DNS）
                   if (!document.getElementById('custom-mobile-flush')) {
                     const mBox = document.createElement('div')
                     mBox.id = 'custom-mobile-flush'
