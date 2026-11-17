@@ -9,14 +9,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node & pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+
+      - name: Enable Corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
 
       - name: Patch mobile 2-column grid
         run: |
@@ -25,7 +26,7 @@ jobs:
 
       - name: Install and Build
         run: |
-          pnpm install
+          pnpm install --no-frozen-lockfile
           pnpm build
 
       - name: Upload dist artifact
