@@ -24,7 +24,7 @@ jobs:
 
       - name: Patch mobile 2-column grid
         run: |
-          # 1. 替换 packages/ui 下的单列网格为双列
+          # 1. 尝试替换 packages/ui 下的单列网格为双列
           grep -rl "grid-cols-1" packages/ui --exclude-dir={node_modules,.nuxt,.output} | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
 
           # 2. 向 packages/ui/assets 下的主样式文件追加手机端强制双列 CSS 规则
@@ -54,10 +54,13 @@ jobs:
           fi
           echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
+
           # 关键修复：将所有绝对路径 /_nuxt/ 替换为相对路径 ./_nuxt/，彻底解决子路径 404 白屏问题
-          grep -rl "/_nuxt/" . | xargs -r sed -i 's|"/_nuxt/|"./_nuxt/|g; s|'"'"'/_nuxt/|'"'"'./_nuxt/|g'         
+          grep -rl "/_nuxt/" . | xargs -r sed -i 's|"/_nuxt/|"./_nuxt/|g; s|'"'"'/_nuxt/|'"'"'./_nuxt/|g'
+          
           # 删除 PWA 离线缓存脚本，防止浏览器死锁旧版页面
           rm -f sw.js workbox-*.js
+
           zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
 
       - name: Publish to GitHub Releases
