@@ -1,4 +1,4 @@
-name:重构建面板 Build Custom MetaCubeXD
+name: 重构面板 Build Custom MetaCubeXD
 on:
   workflow_dispatch:
 
