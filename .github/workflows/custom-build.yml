@@ -33,9 +33,10 @@ jobs:
 
       - name: Package build output
         run: |
-          # 自动定位构建产物目录（包含编译后 assets 文件夹的 index.html）
-          OUT_DIR=$(find . -maxdepth 4 -path "*/assets" -type d ! -path "./node_modules/*" ! -path "./src/*" | head -n 1 | xargs dirname)
-          echo "Detected build output directory: $OUT_DIR"
+          # 精准定位编译产物目录（查找包含编译后带哈希 JS 文件的目录的上一级）
+          ASSETS_DIR=$(find . -type f -name "index-*.js" ! -path "./node_modules/*" | head -n 1 | xargs dirname)
+          OUT_DIR=$(dirname "$ASSETS_DIR")
+          echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
           zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
 
