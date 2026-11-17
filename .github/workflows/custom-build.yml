@@ -48,13 +48,16 @@ jobs:
 
       - name: Package build output
         run: |
-          # Nuxt 3 静态产物目录位于 packages/ui/.output/public
           OUT_DIR=$(find packages/ui -type f -name "index.html" -path "*/.output/public/*" | head -n 1 | xargs dirname)
           if [ -z "$OUT_DIR" ]; then
             OUT_DIR="packages/ui/.output/public"
           fi
           echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
+          # 关键修复：将所有绝对路径 /_nuxt/ 替换为相对路径 ./_nuxt/，彻底解决子路径 404 白屏问题
+          grep -rl "/_nuxt/" . | xargs -r sed -i 's|"/_nuxt/|"./_nuxt/|g; s|'"'"'/_nuxt/|'"'"'./_nuxt/|g'         
+          # 删除 PWA 离线缓存脚本，防止浏览器死锁旧版页面
+          rm -f sw.js workbox-*.js
           zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
 
       - name: Publish to GitHub Releases
