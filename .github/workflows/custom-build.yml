@@ -53,15 +53,44 @@ jobs:
           EOF
           fi
 
-          # 4. 精简版交互增强插件（首次进代理页 + 底部直达配置 + 一键清FakeIP/DNS）
+          # 4. 精简版交互增强插件（首次进代理页 + 默认折叠策略组 + 底部直达配置 + 一键清FakeIP/DNS）
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
           export default defineNuxtPlugin(() => {
             if (typeof window === 'undefined') return
 
+            // 1. 首次打开根目录时跳转到代理页（手动点击概览可正常进入）
             const initHash = window.location.hash
             if (initHash === '' || initHash === '#/' || initHash === '#') {
               window.location.replace('#/proxies')
+            }
+
+            // 2. 首次加载代理页时，如果所有策略组处于展开状态，自动触发一次全部折叠
+            let autoCollapsedOnce = false
+            const collapseAllGroupsOnInit = () => {
+              if (autoCollapsedOnce) return
+              if (!window.location.hash.includes('/proxies')) return
+
+              // 查找策略组折叠面板（checkbox 或带有 collapse-open 的容器）
+              const openCheckboxes = Array.from(document.querySelectorAll('.collapse input[type="checkbox"]:checked')) as HTMLInputElement[]
+              if (openCheckboxes.length > 1) {
+                openCheckboxes.forEach(cb => cb.click())
+                autoCollapsedOnce = true
+                return
+              }
+
+              // 兼容新版按钮触发的展开状态：若展开的节点网格超过 2 个，自动点击顶部的“全部折叠”按钮
+              const visibleGrids = Array.from(document.querySelectorAll('main .grid')).filter(el => (el as HTMLElement).offsetHeight > 0)
+              if (visibleGrids.length > 2) {
+                const collapseAllBtn = Array.from(document.querySelectorAll('main button')).find(btn => {
+                  const title = (btn.getAttribute('title') || btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase()
+                  return title.includes('collapse') || title.includes('折叠') || title.includes('收起')
+                }) as HTMLButtonElement | undefined
+                if (collapseAllBtn) {
+                  collapseAllBtn.click()
+                  autoCollapsedOnce = true
+                }
+              }
             }
 
             const getApiConfig = () => {
@@ -137,6 +166,8 @@ jobs:
             }
 
             const enhanceNavigation = () => {
+              collapseAllGroupsOnInit()
+
               const desktopNav = document.querySelector('aside nav') || document.querySelector('nav')
               if (desktopNav && window.innerWidth >= 768 && !document.getElementById('custom-desktop-flush')) {
                 const box = document.createElement('div')
@@ -180,7 +211,7 @@ jobs:
               }
             }
 
-            setInterval(enhanceNavigation, 800)
+            setInterval(enhanceNavigation, 600)
           })
           EOF
 
