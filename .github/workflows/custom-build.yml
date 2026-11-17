@@ -2,6 +2,9 @@ name: Build Custom MetaCubeXD
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,7 +15,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Enable Corepack and pnpm
         run: |
@@ -28,8 +31,20 @@ jobs:
           pnpm install --no-frozen-lockfile
           pnpm build
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
+      - name: Package build output
+        run: |
+          # 自动定位构建产物目录（包含编译后 assets 文件夹的 index.html）
+          OUT_DIR=$(find . -maxdepth 4 -path "*/assets" -type d ! -path "./node_modules/*" ! -path "./src/*" | head -n 1 | xargs dirname)
+          echo "Detected build output directory: $OUT_DIR"
+          cd "$OUT_DIR"
+          zip -r "$GITHUB_WORKSPACE/metacubexd-dist-patched.zip" ./*
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: metacubexd-dist-patched
-          path: dist/
+          tag_name: custom-latest
+          name: Custom Build (Mobile 2-Column)
+          files: metacubexd-dist-patched.zip
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
