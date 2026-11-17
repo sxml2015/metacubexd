@@ -1,0 +1,35 @@
+name: Build Custom MetaCubeXD
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Patch mobile 2-column grid
+        run: |
+          find src -type f -name "*.tsx" -exec sed -i 's/grid-cols-1 gap-2 sm:grid-cols-2/grid-cols-2 gap-1.5 sm:grid-cols-2/g' {} +
+          find src -type f -name "*.tsx" -exec sed -i 's/grid-cols-1 sm:grid-cols-2/grid-cols-2 sm:grid-cols-2/g' {} +
+
+      - name: Install and Build
+        run: |
+          pnpm install
+          pnpm build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metacubexd-dist-patched
+          path: dist/
