@@ -19,10 +19,29 @@ jobs:
           corepack enable
           corepack prepare pnpm@latest --activate
 
-      - name: Patch mobile 2-column grid
+      - name: Patch mobile 2-column grid via Node
         run: |
-          find src -type f -name "*.tsx" -exec sed -i 's/grid-cols-1 gap-2 sm:grid-cols-2/grid-cols-2 gap-1.5 sm:grid-cols-2/g' {} +
-          find src -type f -name "*.tsx" -exec sed -i 's/grid-cols-1 sm:grid-cols-2/grid-cols-2 sm:grid-cols-2/g' {} +
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            function walk(dir) {
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) walk(full);
+                else if (full.endsWith(".tsx")) {
+                  let content = fs.readFileSync(full, "utf8");
+                  const updated = content
+                    .replace(/grid-cols-1 gap-2 sm:grid-cols-2/g, "grid-cols-2 gap-1.5 sm:grid-cols-2")
+                    .replace(/grid-cols-1 sm:grid-cols-2/g, "grid-cols-2 sm:grid-cols-2");
+                  if (content !== updated) {
+                    fs.writeFileSync(full, updated, "utf8");
+                    console.log("Patched:", full);
+                  }
+                }
+              }
+            }
+            walk("src");
+          '
 
       - name: Install and Build
         run: |
