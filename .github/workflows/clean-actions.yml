@@ -1,0 +1,42 @@
+name: 清理Clean Old Actions & Cache
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old workflow runs (Preserve Releases)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "正在清理历史 Actions 运行记录（不会影响 Releases）..."
+          # 获取所有已完成的运行记录 ID（排除当前正在运行的任务）
+          RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=100" --jq '.workflow_runs[] | select(.status == "completed") | .id')
+          for id in $RUN_IDS; do
+            echo "删除运行记录 ID: $id"
+            gh api -X DELETE "repos/${{ github.repository }}/actions/runs/$id" || true
+          done
+
+      - name: Delete old artifacts & caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "正在清理残留的 Artifacts 产物..."
+          ARTIFACT_IDS=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '.artifacts[].id')
+          for aid in $ARTIFACT_IDS; do
+            echo "删除 Artifact ID: $aid"
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$aid" || true
+          done
+
+          echo "正在清理 Actions 编译缓存..."
+          CACHE_IDS=$(gh api "repos/${{ github.repository }}/actions/caches?per_page=100" --jq '.actions_caches[].id')
+          for cid in $CACHE_IDS; do
+            echo "删除 Cache ID: $cid"
+            gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$cid" || true
+          done
+          echo "清理完成！Releases 已完整保留。"
