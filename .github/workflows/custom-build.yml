@@ -24,102 +24,132 @@ jobs:
 
       - name: Patch UI Components & Styles
         run: |
-          # 1. 精准修改代理节点网格为手机端双列（不修改全局 .grid，避免破坏底部导航和设置页）
+          # 1. 代理节点网格保持双列（手机端）
           find packages/ui/components -type f -name "*.vue" -exec grep -l "grid-cols-1" {} + | xargs -r sed -i 's/grid-cols-1/grid-cols-2/g' || true
 
-          # 2. 将选中节点的高亮边框样式替换为明显的背景色填充（类似旧版高对比度高亮）
+          # 2. 选中节点使用高对比度主题色背景高亮
           find packages/ui/components -type f -name "*Proxy*.vue" -exec sed -i 's/border-primary/border-primary bg-primary\/85 text-primary-content/g' {} + || true
 
-          # 3. 注入专用 CSS：确保底部导航单排展示、配置页手机端上下布局
+          # 3. 注入 CSS：修复配置页手机端单列上下布局
           CSS_FILE=$(find packages/ui/assets -type f -name "*.css" | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting custom layout CSS into $CSS_FILE"
             cat << 'EOF' >> "$CSS_FILE"
 
-          /* 手机端设置页面强制恢复单列上下布局 */
           @media (max-width: 640px) {
             main .grid.grid-cols-2:has(input),
             main .grid.grid-cols-2:has(select),
             main .grid.md\:grid-cols-2 {
               grid-template-columns: minmax(0, 1fr) !important;
             }
-            /* 底部导航栏强制单排等宽显示，防止图标折行被遮挡 */
-            nav.btm-nav, footer .grid, nav .grid {
-              display: flex !important;
-              flex-direction: row !important;
-              justify-content: space-around !important;
-              align-items: center !important;
-              flex-wrap: nowrap !important;
-            }
           }
           EOF
           fi
 
-          # 4. 创建客户端插件：默认打开进入代理页 + 底部导航快捷按钮（清 Fake-IP & 清 DNS 缓存）
+          # 4. 编写完整交互增强插件
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
-          export default defineNuxtPlugin((nuxtApp) => {
+          export default defineNuxtPlugin(() => {
             if (typeof window === 'undefined') return
 
-            // 1. 打开面板时如果处于首页/概览，自动跳转到代理页
-            nuxtApp.hook('page:finish', () => {
-              const hash = window.location.hash
-              if (hash === '' || hash === '#/' || hash === '#/overview') {
-                window.location.hash = '#/proxies'
-              }
-            })
-
-            // 2. 在底部导航栏右侧动态挂载“清FakeIP”和“清DNS”快捷按钮
-            const mountQuickActions = () => {
-              if (document.getElementById('custom-nav-flush-group')) return
-              const nav = document.querySelector('nav.btm-nav') || document.querySelector('footer') || document.querySelector('nav')
-              if (!nav) return
-
-              const getApiConfig = () => {
-                try {
-                  const raw = localStorage.getItem('endpoint') || localStorage.getItem('selectedEndpoint')
-                  if (raw) {
-                    const parsed = JSON.parse(raw)
-                    const item = Array.isArray(parsed) ? parsed[0] : parsed
-                    if (item?.url) return { url: item.url.replace(/\/$/, ''), secret: item.secret || '' }
-                  }
-                } catch {}
-                return { url: window.location.origin, secret: '' }
-              }
-
-              const flushCache = async (type: 'fakeip' | 'dns', btn: HTMLButtonElement) => {
-                const origText = btn.innerText
-                btn.innerText = '...'
-                try {
-                  const { url, secret } = getApiConfig()
-                  const headers: Record<string, string> = {}
-                  if (secret) headers['Authorization'] = `Bearer ${secret}`
-                  const res = await fetch(`${url}/cache/${type}/flush`, { method: 'POST', headers })
-                  btn.innerText = res.ok ? '✓' : '!'
-                } catch {
-                  btn.innerText = '!'
-                }
-                setTimeout(() => { btn.innerText = origText }, 1200)
-              }
-
-              const box = document.createElement('div')
-              box.id = 'custom-nav-flush-group'
-              box.style.cssText = 'display:flex;flex-direction:column;gap:2px;justify-content:center;align-items:center;padding:0 4px;flex-shrink:0;'
-
-              const mkBtn = (label: string, type: 'fakeip' | 'dns', color: string) => {
-                const b = document.createElement('button')
-                b.innerText = label
-                b.style.cssText = `font-size:10px;line-height:1.2;padding:2px 5px;border-radius:4px;background:${color};color:#fff;font-weight:600;border:none;cursor:pointer;white-space:nowrap;`
-                b.onclick = (e) => { e.stopPropagation(); flushCache(type, b) }
-                return b
-              }
-
-              box.appendChild(mkBtn('清FakeIP', 'fakeip', '#8b5cf6'))
-              box.appendChild(mkBtn('清DNS', 'dns', '#0ea5e9'))
-              nav.appendChild(box)
+            // 修复1：仅在首次进入首页（#/ 或空 hash）时自动跳到代理页，手动点击“概览”(#/overview)可正常进入
+            const initHash = window.location.hash
+            if (initHash === '' || initHash === '#/' || initHash === '#') {
+              window.location.replace('#/proxies')
             }
 
-            setInterval(mountQuickActions, 1000)
+            const getApiConfig = () => {
+              try {
+                const raw = localStorage.getItem('endpoint') || localStorage.getItem('selectedEndpoint')
+                if (raw) {
+                  const parsed = JSON.parse(raw)
+                  const item = Array.isArray(parsed) ? parsed[0] : parsed
+                  if (item?.url) return { url: item.url.replace(/\/$/, ''), secret: item.secret || '' }
+                }
+              } catch {}
+              return { url: window.location.origin, secret: '' }
+            }
+
+            const flushCache = async (type: 'fakeip' | 'dns', btn: HTMLButtonElement) => {
+              const origText = btn.innerText
+              btn.innerText = '清理中...'
+              try {
+                const { url, secret } = getApiConfig()
+                const headers: Record<string, string> = {}
+                if (secret) headers['Authorization'] = `Bearer ${secret}`
+                const res = await fetch(`${url}/cache/${type}/flush`, { method: 'POST', headers })
+                btn.innerText = res.ok ? '已清空 ✓' : '失败 !'
+              } catch {
+                btn.innerText = '失败 !'
+              }
+              setTimeout(() => { btn.innerText = origText }, 1200)
+            }
+
+            const mkFlushBtn = (label: string, type: 'fakeip' | 'dns', bg: string, isDesktop: boolean) => {
+              const b = document.createElement('button')
+              b.innerText = label
+              b.style.cssText = isDesktop
+                ? `width:100%;padding:10px 14px;border-radius:10px;background:${bg};color:#fff;font-size:14px;font-weight:600;border:none;cursor:pointer;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.25);`
+                : `padding:4px 10px;border-radius:8px;background:${bg};color:#fff;font-size:12px;font-weight:600;border:none;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.3);`
+              b.onclick = (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                flushCache(type, b)
+              }
+              return b
+            }
+
+            // 修复2 & 3：分别适配电脑侧边栏大按钮 + 手机底部直达“配置”与快捷清缓存按钮
+            const enhanceNavigation = () => {
+              // A. 电脑端左侧导航栏（挂载大号按钮，不隐藏用量/日志）
+              const desktopNav = document.querySelector('aside nav') || document.querySelector('nav')
+              if (desktopNav && window.innerWidth >= 768 && !document.getElementById('custom-desktop-flush')) {
+                const box = document.createElement('div')
+                box.id = 'custom-desktop-flush'
+                box.style.cssText = 'display:flex;flex-direction:column;gap:8px;padding:12px;margin-top:8px;border-top:1px solid rgba(255,255,255,0.1);'
+                box.appendChild(mkFlushBtn('清空 Fake-IP', 'fakeip', '#8b5cf6', true))
+                box.appendChild(mkFlushBtn('清空 DNS 缓存', 'dns', '#0ea5e9', true))
+                desktopNav.appendChild(box)
+              }
+
+              // B. 手机端底部导航：将中间的“+ 更多”按钮直接改为“配置”，并在底栏上方挂载醒目的快捷清缓存条
+              if (window.innerWidth < 768) {
+                // 查找手机底部悬浮导航容器
+                const allEls = Array.from(document.querySelectorAll('div, nav, footer'))
+                const mobileDock = allEls.find(el => {
+                  const style = window.getComputedStyle(el)
+                  return style.position === 'fixed' && parseInt(style.bottom || '999') <= 24 && el.innerText.includes('概览') && el.innerText.includes('代理')
+                }) as HTMLElement | undefined
+
+                if (mobileDock) {
+                  // 将“更多”按钮改造为直接跳转“配置”
+                  const btns = Array.from(mobileDock.querySelectorAll('button, a'))
+                  const moreBtn = btns.find(b => b.textContent?.includes('更多')) as HTMLElement | undefined
+                  if (moreBtn && !moreBtn.dataset.patchedConfig) {
+                    moreBtn.dataset.patchedConfig = '1'
+                    moreBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span style="font-size:11px;margin-top:2px;">配置</span>`
+                    moreBtn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;border:none;box-shadow:none;width:auto;height:auto;padding:4px 8px;'
+                    moreBtn.onclick = (e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      window.location.hash = '#/config'
+                    }
+                  }
+
+                  // 在手机底部导航栏正上方添加双按钮快捷栏（清FakeIP & 清DNS）
+                  if (!document.getElementById('custom-mobile-flush')) {
+                    const mBox = document.createElement('div')
+                    mBox.id = 'custom-mobile-flush'
+                    mBox.style.cssText = 'position:fixed;right:12px;bottom:76px;z-index:45;display:flex;gap:8px;'
+                    mBox.appendChild(mkFlushBtn('清 Fake-IP', 'fakeip', '#8b5cf6', false))
+                    mBox.appendChild(mkFlushBtn('清 DNS', 'dns', '#0ea5e9', false))
+                    document.body.appendChild(mBox)
+                  }
+                }
+              }
+            }
+
+            setInterval(enhanceNavigation, 800)
           })
           EOF
 
@@ -137,7 +167,6 @@ jobs:
           echo "Detected exact build directory: $OUT_DIR"
           cd "$OUT_DIR"
 
-          # 转换绝对路径为相对路径，解决子路径 404 白屏问题
           grep -rl "/_nuxt/" . | xargs -r sed -i 's|"/_nuxt/|"./_nuxt/|g; s|'"'"'/_nuxt/|'"'"'./_nuxt/|g'
           rm -f sw.js workbox-*.js
 
