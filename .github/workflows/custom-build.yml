@@ -30,7 +30,7 @@ jobs:
           # 2. 选中节点使用高对比度主题色背景高亮
           find packages/ui/components -type f -name "*Proxy*.vue" -exec sed -i 's/border-primary/border-primary bg-primary\/85 text-primary-content/g' {} + || true
 
-          # 3. 注入 CSS：修复配置页手机端单列上下布局
+          # 3. 注入 CSS：修复配置页单列布局 + 节点延迟数字黑色描边
           CSS_FILE=$(find packages/ui/assets -type f -name "*.css" | head -n 1)
           if [ -n "$CSS_FILE" ]; then
             echo "Injecting custom layout CSS into $CSS_FILE"
@@ -43,27 +43,37 @@ jobs:
               grid-template-columns: minmax(0, 1fr) !important;
             }
           }
+
+          /* 节点延迟数字与徽章添加黑色描边，防止高亮背景下看不清 */
+          [class*="Proxy"] span,
+          [class*="proxy"] span,
+          .badge {
+            font-weight: 700 !important;
+            text-shadow: 
+              -1px -1px 0 #000,  
+               1px -1px 0 #000,
+              -1px  1px 0 #000,
+               1px  1px 0 #000,
+               0px  1px 2px rgba(0, 0, 0, 0.9) !important;
+          }
           EOF
           fi
 
-          # 4. 编写完整交互增强插件（智能匹配后端地址与密钥）
+          # 4. 编写完整交互增强插件
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
           export default defineNuxtPlugin(() => {
             if (typeof window === 'undefined') return
 
-            // 仅首次打开根目录时跳转到代理页
             const initHash = window.location.hash
             if (initHash === '' || initHash === '#/' || initHash === '#') {
               window.location.replace('#/proxies')
             }
 
-            // 智能提取当前连接的 Clash/mihomo 后端地址与 Secret 密钥
             const getApiConfig = () => {
               let url = window.location.origin
               let secret = ''
 
-              // 1. 优先遍历 localStorage 寻找包含 url 和 secret 的后端配置对象
               for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i)
                 if (!key) continue
@@ -86,7 +96,6 @@ jobs:
                 }
               }
 
-              // 2. 兜底：检查 URL Hash 或 Search 参数中的 secret / hostname / port
               const fullHref = window.location.href
               const secretMatch = fullHref.match(/[?&]secret=([^&#]+)/)
               if (secretMatch && !secret) {
@@ -113,11 +122,9 @@ jobs:
                 if (res.ok) {
                   btn.innerText = '已清空 ✓'
                 } else {
-                  console.error(`[CustomUX] Flush ${type} failed:`, res.status, url)
                   btn.innerText = `失败(${res.status})`
                 }
-              } catch (err) {
-                console.error(`[CustomUX] Flush ${type} error:`, err)
+              } catch {
                 btn.innerText = '网络错误'
               }
               setTimeout(() => { btn.innerText = origText }, 1500)
@@ -138,7 +145,6 @@ jobs:
             }
 
             const enhanceNavigation = () => {
-              // 电脑端左侧导航栏
               const desktopNav = document.querySelector('aside nav') || document.querySelector('nav')
               if (desktopNav && window.innerWidth >= 768 && !document.getElementById('custom-desktop-flush')) {
                 const box = document.createElement('div')
@@ -149,7 +155,6 @@ jobs:
                 desktopNav.appendChild(box)
               }
 
-              // 手机端底部导航改造
               if (window.innerWidth < 768) {
                 const allEls = Array.from(document.querySelectorAll('div, nav, footer'))
                 const mobileDock = allEls.find(el => {
