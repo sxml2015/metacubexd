@@ -1,4 +1,4 @@
-name: 构建面板Build Custom MetaCubeXD
+name:重构建面板 Build Custom MetaCubeXD
 on:
   workflow_dispatch:
 
@@ -53,7 +53,7 @@ jobs:
           EOF
           fi
 
-          # 4. 编写完整交互增强插件（含后台可视化策略组固定排序开关面板）
+          # 4. 编写完整交互增强插件（修复设置面板挂载条件，确保100%可见）
           mkdir -p packages/ui/plugins
           cat << 'EOF' > packages/ui/plugins/custom-mobile-ux.client.ts
           export default defineNuxtPlugin(() => {
@@ -64,7 +64,6 @@ jobs:
               window.location.replace('#/proxies')
             }
 
-            // 读取与保存自定义固定排序设置（默认包含指定的 8 个组）
             const STORAGE_KEY = 'custom_fixed_groups_cfg_v1'
             const DEFAULT_CFG = {
               enabled: true,
@@ -180,7 +179,6 @@ jobs:
                 const cards = Array.from(grid.children) as HTMLElement[]
 
                 if (!matchedGroup) {
-                  // 如果用户取消了某组的固定排序，恢复默认 order
                   cards.forEach(card => { if (card.style.order) card.style.order = '' })
                   continue
                 }
@@ -204,17 +202,27 @@ jobs:
               }
             }
 
-            // 在“配置”页面动态挂载可视化控制面板
+            // 修复：兼容所有路由路径与DOM结构，在配置页面100%显示可视化设置卡片
             const mountConfigPanel = () => {
-              if (!window.location.hash.includes('/config')) return
+              const fullUrl = window.location.href.toLowerCase()
+              const bodyText = document.body.innerText || ''
+              const isConfigPage = fullUrl.includes('config') || fullUrl.includes('setting') || (bodyText.includes('核心配置') && bodyText.includes('XD 配置'))
+              if (!isConfigPage) return
               if (document.getElementById('custom-fixed-groups-panel')) return
-              const mainEl = document.querySelector('main')
-              if (!mainEl) return
+
+              // 寻找“核心配置 / XD 配置”选项卡栏，把设置卡片紧贴在它正下方
+              const tabsEl = Array.from(document.querySelectorAll('div, nav')).find(el => {
+                const t = (el.textContent || '').trim()
+                return t.includes('核心配置') && t.includes('XD 配置') && t.length < 60
+              })
+
+              const targetContainer = tabsEl?.parentElement || document.querySelector('main') || document.querySelector('.overflow-y-auto') || document.body
+              if (!targetContainer) return
 
               const cfg = getFixedConfig()
               const panel = document.createElement('div')
               panel.id = 'custom-fixed-groups-panel'
-              panel.style.cssText = 'margin:12px 16px;padding:14px;border-radius:12px;background:rgba(30,35,42,0.92);border:1px solid rgba(255,255,255,0.12);color:#fff;font-size:13px;'
+              panel.style.cssText = 'margin:12px 0;padding:14px;border-radius:12px;background:#1e232a;border:1px solid rgba(56,189,248,0.35);color:#fff;font-size:13px;z-index:20;position:relative;'
 
               panel.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -232,14 +240,20 @@ jobs:
                 <div id="cfg-fixed-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
               `
 
-              mainEl.prepend(panel)
+              if (tabsEl && tabsEl.nextSibling) {
+                targetContainer.insertBefore(panel, tabsEl.nextSibling)
+              } else {
+                targetContainer.prepend(panel)
+              }
 
               const renderCheckboxes = () => {
                 const boxWrap = document.getElementById('cfg-fixed-checkboxes')
                 if (!boxWrap) return
-                const current = getFixedConfig()
                 if (!allSelectorGroups.length) {
                   boxWrap.innerHTML = '<span style="color:#64748b;font-size:12px;">正在读取策略组列表...</span>'
+                  syncOriginalGroupOrders().then(() => {
+                    if (allSelectorGroups.length) renderCheckboxes()
+                  })
                   return
                 }
                 boxWrap.innerHTML = ''
@@ -257,7 +271,6 @@ jobs:
                       if (!next.exactGroups.includes(gName)) next.exactGroups.push(gName)
                     } else {
                       next.exactGroups = next.exactGroups.filter((x: string) => x !== gName)
-                      // 若被关键词命中则同步移除对应关键词
                       next.keywords = next.keywords.filter((kw: string) => !gName.toLowerCase().includes(kw.trim().toLowerCase()))
                       const kwInput = document.getElementById('cfg-fixed-keywords') as HTMLInputElement | null
                       if (kwInput) kwInput.value = next.keywords.join(', ')
@@ -292,7 +305,7 @@ jobs:
               }
             }
 
-            setTimeout(syncOriginalGroupOrders, 1000)
+            setTimeout(syncOriginalGroupOrders, 800)
             setInterval(syncOriginalGroupOrders, 15000)
 
             const flushCache = async (type: 'fakeip' | 'dns', btn: HTMLButtonElement) => {
